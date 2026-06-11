@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Bot de trading algorítmico pessoal para futuros perpétuos na Bybit — pesquisa quant (backtest com custos completos) e execução em demo"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pandas>=3.0.3",
+    "pyarrow>=24.0.0",
+    "vectorbt>=0.28.2",
+]
 
 [dependency-groups]
 dev = [
