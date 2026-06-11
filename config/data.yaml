@@ -1,0 +1,7 @@
+# Configuração de dados de mercado (Fase 0 — RF-001/RF-002)
+pairs:
+  - BTCUSDT
+  - ETHUSDT
+interval: "60"        # 1h, na notação da API V5
+start: "2020-01-01"   # UTC — início do histórico
+data_dir: data
