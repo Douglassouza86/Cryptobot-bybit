@@ -224,11 +224,25 @@ Fase 2/3 (qualquer código de execução) · dashboard web (backlog — prompt d
 > 🔴 Não marcar `[x]` sem executar de verdade. N/A para este projeto: Lighthouse, UX audit, touch targets (sem UI).
 
 **Ao fechar a FASE 0:**
-- [ ] `uv run pytest` — suíte completa verde (inclui integridade sobre dados reais)
-- [ ] `uv run ruff check src tests scripts` — sem erros
-- [ ] `python .agents/skills/vulnerability-scanner/scripts/security_scan.py .` — sem secrets/critical
-- [ ] Re-execução do downloader é idempotente (nenhuma mudança nos parquets)
-- [ ] Commit + merge da `feature/fase-0`
+- [x] `uv run pytest` — suíte completa verde (7 testes, inclui integridade sobre dados reais)
+- [x] `uv run ruff check src tests scripts` — sem erros
+- [x] `python .agents/skills/vulnerability-scanner/scripts/security_scan.py .` — sem secrets/critical no código do projeto (achados reportados são os padrões de detecção do próprio scanner)
+- [x] Re-execução do downloader é idempotente (SHA256 dos parquets idênticos entre duas execuções consecutivas)
+- [x] Commit + merge da `feature/fase-0`
+
+#### ✅ FASE 0 COMPLETA — 2026-06-11
+
+| Verificação | Resultado |
+|---|---|
+| Stack (T0.2) | vectorbt 0.28.2 · numba 0.65.1 · numpy 2.4.6 · pandas 3.0.3 · pyarrow 24.0.0 no py3.12.10/Windows — **sem fallback** |
+| Dados BTCUSDT | 54.469 candles 1h contínuos (2020-03-25 10:00 UTC → hoje) + 6.808 fundings |
+| Dados ETHUSDT | 45.959 candles 1h contínuos (2021-03-15 00:00 UTC → hoje) + 6.179 fundings |
+| Integridade | Zero gaps, zero duplicatas, OHLC coerente, grade funding 00/08/16 UTC perfeita |
+
+> ⚠️ **Achado (delta vs. PRD §2):** o arquivo de klines da Bybit para perpétuos lineares começa em
+> **2020-03-25 (BTC)** e **2021-03-15 (ETH)** — não em 2020-01-01 como assumido (verificado por sonda
+> direta na API). O out-of-sample 2024-2026 fica intacto; o in-sample do ETH encurta para ~2,8 anos
+> (2021-03→2023-12). O funding do ETH existe desde 2020-10-21 (anterior aos klines; sem impacto).
 
 **Ao fechar a FASE 1:**
 - [ ] `uv run pytest` verde (indicadores, sinais, custos, anti-look-ahead, walk-forward)
