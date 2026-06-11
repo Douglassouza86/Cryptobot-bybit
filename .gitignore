@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Segredos — NUNCA commitar
+.env
+
+# Dados de mercado e resultados de experimentos (regraváveis; raiz apenas)
+/data/
+/reports/
+
+# Vault Obsidian (notas pessoais)
+/CryptoBot Bybit/

@@ -1,0 +1,27 @@
+[project]
+name = "cryptobot"
+version = "0.1.0"
+description = "Bot de trading algorítmico pessoal para futuros perpétuos na Bybit — pesquisa quant (backtest com custos completos) e execução em demo"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cryptobot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]

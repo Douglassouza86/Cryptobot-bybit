@@ -1,0 +1,90 @@
+//@version=5
+// =============================================================
+//  EMA Trend + RSI Pullback [Baseline] — Gráfico 1H
+//  Estratégia baseline para validação visual antes do bot.
+//  Pensada para perpétuos (ex: BYBIT:BTCUSDT.P) no timeframe 1h.
+//
+//  Lógica:
+//    - Tendência: EMA 50 vs EMA 200 (+ preço vs EMA 200)
+//    - Gatilho:   RSI(14) cruzando o nível de pullback
+//    - Stop:      1.5 x ATR(14)   | Alvo: 2.5 x ATR(14)
+//    - Sizing:    risco fixo de 1% do capital por trade
+//
+//  ATENÇÃO: o TradingView NÃO simula funding rate de perpétuos.
+//  Comissão taker de 0.055% já incluída nas configurações.
+// =============================================================
+strategy("EMA Trend + RSI Pullback [Baseline]",
+     overlay = true,
+     initial_capital = 10000,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.055,
+     slippage = 2,
+     pyramiding = 0,
+     calc_on_every_tick = false)
+
+// ----------------------- Inputs -----------------------------
+emaFastLen   = input.int(50,   "EMA rápida",  group = "Tendência")
+emaSlowLen   = input.int(200,  "EMA lenta",   group = "Tendência")
+
+rsiLen       = input.int(14,   "RSI período", group = "Gatilho")
+rsiLongLvl   = input.int(45,   "RSI nível long (cruza p/ cima)",  group = "Gatilho")
+rsiShortLvl  = input.int(55,   "RSI nível short (cruza p/ baixo)", group = "Gatilho")
+
+atrLen       = input.int(14,   "ATR período",        group = "Risco")
+stopMult     = input.float(1.5, "Stop (x ATR)",      group = "Risco", step = 0.1)
+tpMult       = input.float(2.5, "Alvo (x ATR)",      group = "Risco", step = 0.1)
+riskPct      = input.float(1.0, "Risco por trade (%)", group = "Risco", step = 0.25)
+
+useShorts    = input.bool(true, "Operar short?", group = "Risco")
+
+// Janela de teste (para separar in-sample / out-of-sample)
+startDate    = input.time(timestamp("1 Jan 2023"), "Início do teste", group = "Período")
+endDate      = input.time(timestamp("1 Jan 2027"), "Fim do teste",    group = "Período")
+inWindow     = time >= startDate and time <= endDate
+
+// ----------------------- Cálculos ---------------------------
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsi     = ta.rsi(close, rsiLen)
+atr     = ta.atr(atrLen)
+
+uptrend   = emaFast > emaSlow and close > emaSlow
+downtrend = emaFast < emaSlow and close < emaSlow
+
+longSignal  = uptrend   and ta.crossover(rsi,  rsiLongLvl)
+shortSignal = downtrend and ta.crossunder(rsi, rsiShortLvl) and useShorts
+
+// ----------------- Position sizing (risco 1%) ----------------
+stopDist  = stopMult * atr
+riskCash  = strategy.equity * (riskPct / 100)
+qtyLong   = stopDist > 0 ? riskCash / stopDist : 0
+qtyShort  = qtyLong
+
+// ----------------------- Execução ---------------------------
+if inWindow and strategy.position_size == 0
+    if longSignal
+        strategy.entry("Long", strategy.long, qty = qtyLong)
+        strategy.exit("Long TP/SL", from_entry = "Long",
+             stop  = close - stopDist,
+             limit = close + tpMult * atr)
+    if shortSignal
+        strategy.entry("Short", strategy.short, qty = qtyShort)
+        strategy.exit("Short TP/SL", from_entry = "Short",
+             stop  = close + stopDist,
+             limit = close - tpMult * atr)
+
+// Fecha tudo fora da janela de teste
+if not inWindow and strategy.position_size != 0
+    strategy.close_all("Fora da janela")
+
+// ----------------------- Visual -----------------------------
+plot(emaFast, "EMA 50",  color = color.new(color.orange, 0), linewidth = 2)
+plot(emaSlow, "EMA 200", color = color.new(color.blue,   0), linewidth = 2)
+
+bgcolor(uptrend   ? color.new(color.green, 92) :
+     downtrend    ? color.new(color.red,   92) : na)
+
+plotshape(longSignal,  "Sinal Long",  shape.triangleup,
+     location.belowbar, color.new(color.green, 0), size = size.small)
+plotshape(shortSignal, "Sinal Short", shape.triangledown,
+     location.abovebar, color.new(color.red, 0),   size = size.small)

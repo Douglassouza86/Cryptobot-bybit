@@ -1,0 +1,175 @@
+//@version=5
+// =============================================================
+//  EMA Trend + RSI Pullback v2 — Gráfico 1H
+//  Novidades vs baseline:
+//   [1] Filtro de tendência multi-timeframe (Diário e/ou Semanal)
+//   [2] Linhas automáticas de topos e fundos (pivôs / S&R)
+//   [3] Filtro de volume (sinal só vale com volume acima da média)
+//   [4] Saída opcional por trailing stop (em vez de alvo fixo)
+//
+//  Pensada para perpétuos (ex: BYBIT:BTCUSDT.P) no timeframe 1h.
+//  Lembrete: TradingView não simula funding rate.
+// =============================================================
+strategy("EMA Trend + RSI Pullback v2 [MTF+Pivots+Vol]",
+     overlay = true,
+     initial_capital = 10000,
+     commission_type = strategy.commission.percent,
+     commission_value = 0.055,
+     slippage = 2,
+     pyramiding = 0,
+     calc_on_every_tick = false)
+
+// ----------------------- Inputs -----------------------------
+emaFastLen   = input.int(50,  "EMA rápida (1h)", group = "Tendência local")
+emaSlowLen   = input.int(200, "EMA lenta (1h)",  group = "Tendência local")
+
+useDaily     = input.bool(true,  "Filtrar pela tendência do Diário?",  group = "Tendência maior (MTF)")
+useWeekly    = input.bool(false, "Filtrar pela tendência do Semanal?", group = "Tendência maior (MTF)")
+htfEmaLen    = input.int(21, "EMA do timeframe maior", group = "Tendência maior (MTF)")
+
+rsiLen       = input.int(14, "RSI período", group = "Gatilho")
+rsiLongLvl   = input.int(45, "RSI nível long (cruza p/ cima)",   group = "Gatilho")
+rsiShortLvl  = input.int(55, "RSI nível short (cruza p/ baixo)", group = "Gatilho")
+
+useVolFilter = input.bool(true, "Exigir volume acima da média?", group = "Volume")
+volMaLen     = input.int(20,    "Média de volume (períodos)",    group = "Volume")
+volMult      = input.float(1.2, "Volume mínimo (x média)",       group = "Volume", step = 0.1)
+
+atrLen       = input.int(14,    "ATR período",          group = "Risco")
+stopMult     = input.float(1.5, "Stop (x ATR)",         group = "Risco", step = 0.1)
+tpMult       = input.float(2.5, "Alvo (x ATR)",         group = "Risco", step = 0.1)
+useTrailing  = input.bool(false, "Usar trailing stop em vez de alvo fixo?", group = "Risco")
+trailTrigger = input.float(1.5, "Trailing ativa após (x ATR) a favor", group = "Risco", step = 0.1)
+trailOffset  = input.float(2.0, "Distância do trailing (x ATR)",       group = "Risco", step = 0.1)
+riskPct      = input.float(1.0, "Risco por trade (%)",  group = "Risco", step = 0.25)
+useShorts    = input.bool(true, "Operar short?",        group = "Risco")
+
+showPivots   = input.bool(true, "Mostrar linhas de topos/fundos?", group = "Topos e Fundos")
+pivLen       = input.int(15, "Força do pivô (candles de cada lado)", group = "Topos e Fundos")
+maxLines     = input.int(8,  "Máx. de linhas no gráfico", group = "Topos e Fundos", minval = 2, maxval = 20)
+
+startDate    = input.time(timestamp("1 Jan 2023"), "Início do teste", group = "Período")
+endDate      = input.time(timestamp("1 Jan 2027"), "Fim do teste",    group = "Período")
+inWindow     = time >= startDate and time <= endDate
+
+// ----------------- Tendência local (1h) ---------------------
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+
+upLocal   = emaFast > emaSlow and close > emaSlow
+downLocal = emaFast < emaSlow and close < emaSlow
+
+// ------------- Tendência maior (Diário / Semanal) -----------
+// close[1] do timeframe maior com lookahead_off => sem repainting:
+// usamos apenas dados de candles JÁ FECHADOS do timeframe maior.
+f_htfTrend(tf) =>
+    [c, e] = request.security(syminfo.tickerid, tf,
+         [close[1], ta.ema(close, htfEmaLen)[1]],
+         lookahead = barmerge.lookahead_off)
+    c > e ? 1 : c < e ? -1 : 0
+
+dTrend = useDaily  ? f_htfTrend("D") : 0
+wTrend = useWeekly ? f_htfTrend("W") : 0
+
+htfOkLong  = (not useDaily or dTrend == 1)  and (not useWeekly or wTrend == 1)
+htfOkShort = (not useDaily or dTrend == -1) and (not useWeekly or wTrend == -1)
+
+// ----------------------- Volume -----------------------------
+volMa   = ta.sma(volume, volMaLen)
+volOk   = not useVolFilter or volume > volMa * volMult
+
+// ----------------------- Sinais -----------------------------
+rsi = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+
+longSignal  = upLocal   and htfOkLong  and volOk and ta.crossover(rsi,  rsiLongLvl)
+shortSignal = downLocal and htfOkShort and volOk and ta.crossunder(rsi, rsiShortLvl) and useShorts
+
+// ----------------- Position sizing (risco 1%) ----------------
+stopDist = stopMult * atr
+riskCash = strategy.equity * (riskPct / 100)
+qty      = stopDist > 0 ? riskCash / stopDist : 0
+
+// ----------------------- Execução ---------------------------
+// strategy.exit usa "points" como ticks => converter preço p/ ticks
+toTicks(p) => p / syminfo.mintick
+
+if inWindow and strategy.position_size == 0
+    if longSignal
+        strategy.entry("Long", strategy.long, qty = qty)
+        if useTrailing
+            strategy.exit("Long X", from_entry = "Long",
+                 stop = close - stopDist,
+                 trail_points = toTicks(trailTrigger * atr),
+                 trail_offset = toTicks(trailOffset  * atr))
+        else
+            strategy.exit("Long X", from_entry = "Long",
+                 stop  = close - stopDist,
+                 limit = close + tpMult * atr)
+    if shortSignal
+        strategy.entry("Short", strategy.short, qty = qty)
+        if useTrailing
+            strategy.exit("Short X", from_entry = "Short",
+                 stop = close + stopDist,
+                 trail_points = toTicks(trailTrigger * atr),
+                 trail_offset = toTicks(trailOffset  * atr))
+        else
+            strategy.exit("Short X", from_entry = "Short",
+                 stop  = close + stopDist,
+                 limit = close - tpMult * atr)
+
+if not inWindow and strategy.position_size != 0
+    strategy.close_all("Fora da janela")
+
+// --------------- Topos e Fundos (pivôs / S&R) ----------------
+// Atenção: um pivô só é CONFIRMADO 'pivLen' candles depois de
+// ocorrer. As linhas servem para contexto visual, não como
+// gatilho "mágico" — evite a ilusão de antecipação no replay.
+var array<line> resLines = array.new<line>()
+var array<line> supLines = array.new<line>()
+
+f_addLine(arr, ln) =>
+    array.push(arr, ln)
+    if array.size(arr) > maxLines
+        line.delete(array.shift(arr))
+
+ph = ta.pivothigh(high, pivLen, pivLen)
+pl = ta.pivotlow(low,   pivLen, pivLen)
+
+if showPivots and not na(ph)
+    f_addLine(resLines, line.new(bar_index - pivLen, ph, bar_index + 50, ph,
+         extend = extend.right, color = color.new(color.red, 35),
+         style = line.style_dashed))
+if showPivots and not na(pl)
+    f_addLine(supLines, line.new(bar_index - pivLen, pl, bar_index + 50, pl,
+         extend = extend.right, color = color.new(color.green, 35),
+         style = line.style_dashed))
+
+// ----------------------- Visual -----------------------------
+plot(emaFast, "EMA 50 (1h)",  color = color.new(color.orange, 0), linewidth = 2)
+plot(emaSlow, "EMA 200 (1h)", color = color.new(color.blue,   0), linewidth = 2)
+
+// Fundo: verde/vermelho só quando 1h E timeframe maior concordam
+bgcolor(upLocal and htfOkLong    ? color.new(color.green, 90) :
+     downLocal and htfOkShort    ? color.new(color.red,   90) : na)
+
+plotshape(longSignal,  "Sinal Long",  shape.triangleup,
+     location.belowbar, color.new(color.green, 0), size = size.small)
+plotshape(shortSignal, "Sinal Short", shape.triangledown,
+     location.abovebar, color.new(color.red, 0),   size = size.small)
+
+// Painel de status (canto superior direito)
+var table tbl = table.new(position.top_right, 2, 3, border_width = 1)
+if barstate.islast
+    table.cell(tbl, 0, 0, "Diário",  text_color = color.white, bgcolor = color.new(color.gray, 40))
+    table.cell(tbl, 1, 0, dTrend == 1 ? "ALTA" : dTrend == -1 ? "BAIXA" : "—",
+         text_color = color.white,
+         bgcolor = dTrend == 1 ? color.new(color.green, 30) : dTrend == -1 ? color.new(color.red, 30) : color.new(color.gray, 40))
+    table.cell(tbl, 0, 1, "Semanal", text_color = color.white, bgcolor = color.new(color.gray, 40))
+    table.cell(tbl, 1, 1, wTrend == 1 ? "ALTA" : wTrend == -1 ? "BAIXA" : "—",
+         text_color = color.white,
+         bgcolor = wTrend == 1 ? color.new(color.green, 30) : wTrend == -1 ? color.new(color.red, 30) : color.new(color.gray, 40))
+    table.cell(tbl, 0, 2, "Volume",  text_color = color.white, bgcolor = color.new(color.gray, 40))
+    table.cell(tbl, 1, 2, volOk ? "OK" : "Fraco",
+         text_color = color.white,
+         bgcolor = volOk ? color.new(color.green, 30) : color.new(color.orange, 30))
