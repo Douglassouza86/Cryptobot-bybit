@@ -73,18 +73,49 @@ def load_grids(path: Path = DEFAULT_PARAMS_PATH) -> dict[str, GridSpec]:
     }
 
 
+def params_from_axes(spec: GridSpec, base: EmaRsiV2Params, axis_values: dict) -> EmaRsiV2Params:
+    """Aplica overrides da hipótese + valores dos eixos (com mapeamento) à base."""
+    updates = dict(spec.overrides)
+    for eixo, valor in axis_values.items():
+        mapper = _AXIS_MAPPERS.get(eixo)
+        updates.update(mapper(valor) if mapper else {eixo: valor})
+    return base.model_copy(update=updates)
+
+
 def expand(spec: GridSpec, base: EmaRsiV2Params) -> list[tuple[dict, EmaRsiV2Params]]:
     """Produto cartesiano do grid -> [(valores_dos_eixos, params_completos)]."""
-    combos = []
     eixos = list(spec.grid)
-    for valores in itertools.product(*(spec.grid[eixo] for eixo in eixos)):
-        axis_values = dict(zip(eixos, valores))
-        updates = dict(spec.overrides)
-        for eixo, valor in axis_values.items():
-            mapper = _AXIS_MAPPERS.get(eixo)
-            updates.update(mapper(valor) if mapper else {eixo: valor})
-        combos.append((axis_values, base.model_copy(update=updates)))
-    return combos
+    return [
+        (axis_values := dict(zip(eixos, valores)), params_from_axes(spec, base, axis_values))
+        for valores in itertools.product(*(spec.grid[eixo] for eixo in eixos))
+    ]
+
+
+def neighborhood_score(
+    results: pd.DataFrame, axes: list[str], metric: str = "pf"
+) -> pd.Series:
+    """Mediana da métrica na vizinhança de cada combinação (regra da spec §5/§7).
+
+    Vizinhos = combinações iguais em todos os eixos exceto no máximo UM,
+    que difere em exatamente um passo na ordem do grid congelado (a própria
+    combinação inclusa). Um pico isolado tem vizinhança ruim e dilui; o
+    centro de uma região robusta mantém o score alto. A escolha da
+    configuração para o OOS é o argmax deste score (desempate: menor DD) —
+    regra mecânica, fixada ANTES de olhar o OOS.
+    """
+    ords = np.column_stack(
+        [
+            results[a].map({v: i for i, v in enumerate(pd.unique(results[a]))}).to_numpy()
+            for a in axes
+        ]
+    )
+    dist = np.abs(ords[:, None, :] - ords[None, :, :]).sum(axis=2)
+    vals = results[metric].to_numpy(dtype=float)
+    return pd.Series(
+        [float(np.nanmedian(vals[dist[i] <= 1])) for i in range(len(results))],
+        index=results.index,
+        name=f"{metric}_nbhd",
+    )
 
 
 def signal_function(hypothesis: str):

@@ -138,6 +138,42 @@ def test_heatmap_mediana_distingue_pico_de_regiao(tmp_path):
     assert table.equals(heatmap_table(df, "x", "y", "pf"))
 
 
+def test_neighborhood_score_pico_vs_regiao():
+    from cryptobot.backtest.grid import neighborhood_score
+
+    # grade 3x3: região robusta em torno de (1,1); pico isolado em (2,2)
+    linhas = []
+    pf = {
+        (0, 0): 1.2, (0, 1): 1.3, (0, 2): 0.5,
+        (1, 0): 1.3, (1, 1): 1.4, (1, 2): 0.5,
+        (2, 0): 0.5, (2, 1): 0.5, (2, 2): 3.0,
+    }
+    for (i, j), v in pf.items():
+        linhas.append({"a": [10, 20, 30][i], "b": [1, 2, 3][j], "pf": v})
+    df = pd.DataFrame(linhas)
+    score = neighborhood_score(df, ["a", "b"], "pf")
+
+    centro = df.query("a == 20 and b == 2").index[0]
+    pico = df.query("a == 30 and b == 3").index[0]
+    # vizinhança do centro: {1.4, 1.3, 1.3, 0.5, 0.5} -> mediana 1.3
+    np.testing.assert_allclose(score[centro], 1.3)
+    # vizinhança do pico: {3.0, 0.5, 0.5} -> mediana 0.5 (pico diluído)
+    np.testing.assert_allclose(score[pico], 0.5)
+    assert score[centro] > score[pico]
+
+
+def test_params_from_axes_reconstroi_combo():
+    from cryptobot.backtest.grid import params_from_axes
+
+    spec = load_grids()["h4_mtf_filters"]
+    params = params_from_axes(
+        spec, EmaRsiV2Params(), {"mtf": "daily+weekly", "htf_ema_len": 34, "vol_filter": False}
+    )
+    assert params.use_daily and params.use_weekly
+    assert params.htf_ema_len == 34
+    assert not params.use_vol_filter
+
+
 # ------------------------------- walk-forward -------------------------------
 
 
