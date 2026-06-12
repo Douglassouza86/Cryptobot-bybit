@@ -241,6 +241,15 @@ class BacktestResult:
         return float(self.equity.iloc[-1] / self.initial_capital - 1.0)
 
     @property
+    def sharpe(self) -> float:
+        """Sharpe anualizado dos retornos horários do equity (rf = 0)."""
+        returns = self.equity.pct_change().dropna()
+        std = returns.std(ddof=1)
+        if not len(returns) or std == 0.0 or np.isnan(std):
+            return float("nan")
+        return float(returns.mean() / std * np.sqrt(365 * 24))
+
+    @property
     def total_fees(self) -> float:
         return float(self.trades["fees"].sum())
 
@@ -253,6 +262,7 @@ class BacktestResult:
             "n_trades": self.n_trades,
             "profit_factor": self.profit_factor,
             "max_drawdown": self.max_drawdown,
+            "sharpe": self.sharpe,
             "win_rate": self.win_rate,
             "total_return": self.total_return,
             "total_fees": self.total_fees,
