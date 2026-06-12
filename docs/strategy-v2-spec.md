@@ -1,6 +1,6 @@
 # Especificação Formal — EMA Trend + RSI Pullback v2
 
-> **Status:** AGUARDANDO APROVAÇÃO (T1.1) — Douglas deve validar fidelidade ao TradingView antes de T1.3.
+> **Status:** ✅ APROVADA por Douglas em 2026-06-12 (T1.1) — grids do §6 CONGELADOS.
 > **Fontes de verdade:** [`docs/pine/ema_rsi_baseline.pine`](pine/ema_rsi_baseline.pine) (v1) e [`docs/pine/ema_rsi_v2_mtf.pine`](pine/ema_rsi_v2_mtf.pine) (v2).
 > **Regra de ouro:** os ranges do grid (§6) ficam **congelados** a partir da aprovação desta spec — definidos ANTES de qualquer experimento (anti-overfitting).
 
@@ -252,4 +252,4 @@ divergência residual explicada por um dos itens acima.
 
 ## 9. Aprovação
 
-- [ ] **Douglas:** confirmo que esta spec é fiel aos scripts do TradingView e os grids do §6 ficam congelados. (T1.1 — desbloqueia T1.3)
+- [x] **Douglas:** confirmo que esta spec é fiel aos scripts do TradingView e os grids do §6 ficam congelados. (T1.1 — desbloqueia T1.3) — **aprovado em 2026-06-12**
