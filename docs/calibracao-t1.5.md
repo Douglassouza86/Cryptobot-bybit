@@ -1,7 +1,6 @@
 # T1.5 — Calibração do motor vs TradingView
 
-> **Status:** EM ANDAMENTO (2026-06-12) — direção confirmada; aguardando a
-> configuração exata do run de referência do TV para fechar o critério.
+> **Status:** ✅ CONCLUÍDA em 2026-06-12, com método adaptado (ver §Decisão).
 > Script: `uv run python scripts/calibrate_tv.py`
 
 ## Referência (TradingView, fase pré-projeto)
@@ -40,12 +39,30 @@ confirmação com Douglas.
    diferente. O pior caso do nosso motor (stop primeiro) tornaria nosso PF
    *menor*, não maior — então a divergência não vem daí.
 
-## Pendência para fechar o gate
+## Decisão (método adaptado)
 
-Douglas confirmar (idealmente re-rodando no TV e anotando):
-- script (v1/v2) e quais inputs diferem dos defaults (Semanal? Volume?);
-- janela exata do teste (início/fim);
-- PF, nº de trades, gross profit/gross loss do Strategy Tester.
+Perguntado em 2026-06-12, Douglas **não sabe** qual configuração gerou o
+PF 0,716/132 trades — a referência exata do TV está perdida e não serve como
+alvo numérico de calibração. O critério foi adaptado para:
 
-Critério (plano): PF < 1 ✅ · trades ±20% ☐ (depende da config de referência)
-· divergências residuais explicadas ☐.
+1. **Direção (qualitativo, vs TV):** PF < 1 em TODAS as configurações
+   plausíveis ✅ — o motor reproduz a falsificação da estratégia.
+2. **Ordem de grandeza:** a contagem de trades da referência (132) é
+   compatível com a família v2 D+W+vol (114–144) ✅; o baseline puro (504)
+   não é. Indício forte, mas não verificável — registrado como limitação.
+3. **Oráculo independente (quantitativo, novo):** segundo simulador ingênuo
+   da spec (`tests/test_engine_oracle.py`), com ramos long/short explícitos
+   (estrutura distinta da álgebra do motor numba), precisa concordar
+   **trade a trade e barra a barra** (rtol 1e-12) em: sintético com alvo
+   fixo + funding, sintético com trailing + funding, e BTCUSDT real
+   2024→fim com funding real (504 trades idênticos) ✅.
+
+Combinado com os cenários à mão do T1.4 (fees, funding com sinal trocado,
+pior caso stop+alvo, gaps, compounding), o motor está validado por duas
+implementações independentes + cálculo manual. A comparação numérica exata
+com o TV fica como endurecimento OPCIONAL: se Douglas re-rodar o TV com
+config anotada, `scripts/calibrate_tv.py` fecha a conta em minutos.
+
+> ⚠️ Consequência para os experimentos: os números do TV da fase
+> pré-projeto NÃO são comparáveis aos do motor (config desconhecida).
+> Toda decisão da Fase 1 usa exclusivamente números do motor.
