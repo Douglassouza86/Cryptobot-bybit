@@ -18,12 +18,14 @@ def main() -> int:
     client = BybitMarketData()
 
     for symbol in cfg.pairs:
-        klines = update_klines(client, symbol, cfg.start, cfg.data_dir, cfg.interval)
+        for interval in cfg.intervals:
+            klines = update_klines(client, symbol, cfg.start, cfg.data_dir, interval)
+            print(
+                f"{symbol} [{interval}]: {len(klines)} candles "
+                f"({klines.index[0]} -> {klines.index[-1]})"
+            )
         funding = update_funding(client, symbol, cfg.start, cfg.data_dir)
-        print(
-            f"{symbol}: {len(klines)} candles ({klines.index[0]} -> {klines.index[-1]}) | "
-            f"{len(funding)} registros de funding"
-        )
+        print(f"{symbol}: {len(funding)} registros de funding")
     return 0
 
 

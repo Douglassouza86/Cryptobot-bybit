@@ -1,0 +1,16 @@
+# Custos e janelas do backtest (spec §2 e §7). Valores CONGELADOS.
+# Tick sizes verificados via GET /v5/market/instruments-info em 2026-06-12.
+
+initial_capital: 10000
+taker_fee_pct: 0.055        # % por fill (entrada e saída)
+slippage_ticks: 2           # em ordens a mercado e stop; zero em limit
+tick_size:
+  BTCUSDT: 0.1
+  ETHUSDT: 0.01
+
+# Walk-forward (T1.8): otimização NUNCA enxerga o OOS; OOS avaliado 1x/hipótese
+walkforward:
+  is_start: 2020-01-01      # inclusivo (dados reais começam 2020-03-25 BTC / 2021-03-15 ETH)
+  is_end: 2024-01-01        # exclusivo
+  oos_start: 2024-01-01     # inclusivo
+  oos_end: null             # null = fim dos dados

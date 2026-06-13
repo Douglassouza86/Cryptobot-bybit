@@ -1,0 +1,69 @@
+# Estratégia EMA Trend + RSI Pullback v2 — parâmetros e grids
+# Fonte: docs/strategy-v2-spec.md (§6). Os grids estão CONGELADOS desde a
+# aprovação da spec (T1.1) — não alterar após o início dos experimentos.
+# Janela, capital e custos ficam em config/backtest.yaml (T1.4).
+
+strategy: ema_rsi_v2
+
+defaults:
+  # Tendência local (1h)
+  ema_fast: 50
+  ema_slow: 200
+  # Gatilho
+  rsi_len: 14
+  rsi_long_lvl: 45
+  rsi_short_lvl: 55          # regra: 100 - rsi_long_lvl
+  # Filtro multi-timeframe
+  use_daily: true
+  use_weekly: false
+  htf_ema_len: 21
+  htf_lag: 1                 # 1 = último candle HTF fechado; 2 = réplica do TV histórico
+  # Filtro de volume
+  use_vol_filter: true
+  vol_ma_len: 20
+  vol_mult: 1.2
+  # Risco / saídas
+  atr_len: 14
+  stop_mult: 1.5
+  tp_mult: 2.5
+  use_trailing: false
+  trail_trigger: 1.5
+  trail_offset: 2.0
+  risk_pct: 1.0
+  use_shorts: true
+  # Pivôs (H3)
+  piv_len: 15
+
+# Cada hipótese isola UMA variável sobre o núcleo (spec §5).
+# Chaves não listadas em `overrides`/`grid` usam os defaults acima.
+grids:
+  h1_baseline:
+    overrides: {use_daily: false, use_weekly: false, use_vol_filter: false}
+    grid:
+      ema_fast: [30, 50, 80]
+      ema_slow: [150, 200, 250]
+      rsi_long_lvl: [40, 45, 50]   # rsi_short_lvl derivado: 100 - rsi_long_lvl
+      stop_mult: [1.0, 1.5, 2.0]
+      tp_mult: [1.5, 2.5, 3.5]
+
+  h2_trailing:
+    overrides: {use_daily: false, use_weekly: false, use_vol_filter: false, use_trailing: true}
+    grid:
+      stop_mult: [1.0, 1.5, 2.0]
+      trail_trigger: [1.0, 1.5, 2.0]
+      trail_offset: [1.5, 2.0, 3.0]
+
+  h3_pivot_breakout:
+    overrides: {use_daily: false, use_weekly: false, use_vol_filter: false}
+    grid:
+      piv_len: [10, 15, 20]
+      stop_mult: [1.0, 1.5, 2.0]
+      tp_mult: [1.5, 2.5, 3.5]
+      trend_filter: [true, false]
+
+  h4_mtf_filters:
+    overrides: {}
+    grid:
+      mtf: [daily, weekly, daily+weekly]
+      htf_ema_len: [13, 21, 34]
+      vol_filter: [false, true]    # true usa vol_ma_len=20, vol_mult=1.2
