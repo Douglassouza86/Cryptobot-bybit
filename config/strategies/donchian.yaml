@@ -1,0 +1,25 @@
+# N1 — Donchian breakout (ciclo v3). Grid CONGELADO antes dos experimentos.
+# Spec: docs/strategy-n1-spec.md. Execução/custos: config/backtest.yaml.
+
+strategy: donchian
+
+defaults:
+  entry_len: 20            # canal de rompimento (Turtle System 1)
+  exit_len: 10             # canal de saída (metade do de entrada)
+  atr_len: 14
+  stop_mult: 2.0
+  tp_mult: 0.0             # 0 = sem alvo fixo (deixa o lucro correr)
+  risk_pct: 1.0
+  use_shorts: true
+  daily_filter: true
+  htf_ema_len: 50
+  htf_lag: 1
+
+grids:
+  n1_donchian:
+    overrides: {}
+    grid:
+      entry_len: [20, 40, 55]      # System 1 / intermediário / System 2 (Turtle)
+      exit_len: [10, 20]           # combos com exit >= entry são descartados
+      stop_mult: [1.5, 2.0, 3.0]
+      daily_filter: [true, false]
