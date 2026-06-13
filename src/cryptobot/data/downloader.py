@@ -18,8 +18,12 @@ from cryptobot.data.client import INTERVAL_MS, BybitMarketData
 logger = logging.getLogger(__name__)
 
 
-def kline_path(data_dir: Path, symbol: str) -> Path:
-    return data_dir / f"{symbol}_1h.parquet"
+# sufixo de arquivo por intervalo da API V5
+INTERVAL_SUFFIX = {"5": "5m", "15": "15m", "60": "1h", "240": "4h", "D": "1d"}
+
+
+def kline_path(data_dir: Path, symbol: str, interval: str = "60") -> Path:
+    return data_dir / f"{symbol}_{INTERVAL_SUFFIX[interval]}.parquet"
 
 
 def funding_path(data_dir: Path, symbol: str) -> Path:
@@ -51,7 +55,7 @@ def update_klines(
     interval: str = "60",
 ) -> pd.DataFrame:
     """Baixa/atualiza klines de `start` até o último candle fechado."""
-    path = kline_path(data_dir, symbol)
+    path = kline_path(data_dir, symbol, interval)
     end_ms = last_closed_boundary_ms(interval)
     start_ms = int(start.timestamp() * 1000)
 

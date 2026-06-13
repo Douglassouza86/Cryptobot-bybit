@@ -10,7 +10,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cryptobot.indicators import atr, ema, pivot_high, pivot_low, rma, rsi, sma, true_range
+from cryptobot.indicators import (
+    atr,
+    donchian_high,
+    donchian_low,
+    ema,
+    macd,
+    pivot_high,
+    pivot_low,
+    rma,
+    rsi,
+    sma,
+    supertrend,
+    true_range,
+)
 
 TOL = dict(rtol=0.0, atol=1e-8)
 
@@ -209,3 +222,61 @@ def test_pivots_multiplos_em_zigzag(candles):
         assert h[p] == janela.max()
         assert (janela == h[p]).sum() == 1
         np.testing.assert_allclose(out.iloc[t], h[p], **TOL)
+
+
+# ------------------------ Donchian / MACD / Supertrend ----------------------
+
+
+def test_donchian_vs_referencia(candles):
+    h, lo = candles["high"], candles["low"]
+    for length in (20, 55):
+        esperado_h = [h.iloc[max(0, i - length + 1): i + 1].max() if i >= length - 1 else np.nan
+                      for i in range(len(h))]
+        np.testing.assert_allclose(
+            donchian_high(h, length).to_numpy(), np.array(esperado_h), **TOL
+        )
+        esperado_l = [lo.iloc[max(0, i - length + 1): i + 1].min() if i >= length - 1 else np.nan
+                      for i in range(len(lo))]
+        np.testing.assert_allclose(
+            donchian_low(lo, length).to_numpy(), np.array(esperado_l), **TOL
+        )
+
+
+def test_macd_identidade_com_emas(candles):
+    line, signal, hist = macd(candles["close"], 12, 26, 9)
+    np.testing.assert_allclose(
+        line.to_numpy(),
+        (ema(candles["close"], 12) - ema(candles["close"], 26)).to_numpy(), **TOL,
+    )
+    np.testing.assert_allclose(signal.to_numpy(), ema(line, 9).to_numpy(), **TOL)
+    np.testing.assert_allclose(hist.to_numpy(), (line - signal).to_numpy(), **TOL)
+
+
+def test_supertrend_invariantes(candles):
+    line, trend = supertrend(candles["high"], candles["low"], candles["close"], 10, 3.0)
+    validos = trend.notna()
+    assert validos.sum() > 900
+    c = candles["close"][validos]
+    li, tr = line[validos], trend[validos]
+    # tendência +1 <-> linha abaixo do preço; -1 <-> acima
+    assert ((tr == 1) == (li <= c)).all()
+    assert set(tr.unique()) <= {1.0, -1.0}
+    # dentro de uma tendência de alta a linha nunca desce (ratchet)
+    sobe = (tr == 1) & (tr.shift(1) == 1)
+    assert (li.diff()[sobe] >= -1e-9).all()
+    desce = (tr == -1) & (tr.shift(1) == -1)
+    assert (li.diff()[desce] <= 1e-9).all()
+
+
+def test_supertrend_flip_em_tendencia_obvia():
+    n = 120
+    up = pd.Series(np.linspace(100.0, 200.0, n))
+    candles_up = dict(high=up + 1, low=up - 1, close=up)
+    _, trend_up = supertrend(**candles_up, atr_len=10, mult=3.0)
+    assert (trend_up.iloc[30:] == 1).all()  # subida sustentada -> alta
+
+    seq = np.concatenate([np.linspace(100.0, 200.0, 60), np.linspace(200.0, 80.0, 60)])
+    s = pd.Series(seq)
+    _, trend = supertrend(s + 1, s - 1, s, atr_len=10, mult=3.0)
+    assert (trend.iloc[30:55] == 1).all()
+    assert (trend.iloc[-30:] == -1).all()  # queda forte vira baixa

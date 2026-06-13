@@ -205,7 +205,7 @@ def test_funding_nao_cobra_na_barra_da_entrada():
     np.testing.assert_allclose(res.trades.iloc[0]["funding"], QTY0 * 50_000.0 * 0.0001)
 
 
-def test_funding_on_grid_valida_grade():
+def test_funding_on_grid_horario_exato_e_agregacao():
     idx = pd.date_range("2024-01-01", periods=24, freq="h", tz="UTC")
     ok = pd.Series(
         [0.0001], index=pd.to_datetime(["2024-01-01 08:00"], utc=True)
@@ -214,11 +214,26 @@ def test_funding_on_grid_valida_grade():
     assert aligned.sum() == pytest.approx(0.0001)
     assert (aligned[aligned.index.hour != 8] == 0).all()
 
-    fora_da_grade = pd.Series(
-        [0.0001], index=pd.to_datetime(["2024-01-01 08:30"], utc=True)
+    # evento dentro da barra (08:30) é atribuído à barra que o contém (08:00)
+    intra = pd.Series([0.0002], index=pd.to_datetime(["2024-01-01 08:30"], utc=True))
+    agregado = funding_on_grid(idx, intra)
+    assert agregado[pd.Timestamp("2024-01-01 08:00", tz="UTC")] == pytest.approx(0.0002)
+
+
+def test_funding_on_grid_barras_diarias_somam_eventos():
+    """Barra diária agrega os 3 eventos do dia (relatórios informativos D)."""
+    idx = pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")
+    eventos = pd.Series(
+        [0.0001, 0.0002, -0.0001, 0.0005],
+        index=pd.to_datetime(
+            ["2024-01-01 00:00", "2024-01-01 08:00", "2024-01-01 16:00", "2024-01-02 00:00"],
+            utc=True,
+        ),
     )
-    with pytest.raises(ValueError, match="funding"):
-        funding_on_grid(idx, fora_da_grade)
+    out = funding_on_grid(idx, eventos)
+    assert out.iloc[0] == pytest.approx(0.0002)  # 1+2-1
+    assert out.iloc[1] == pytest.approx(0.0005)
+    assert out.iloc[2] == 0.0
 
 
 # -------------------------------- trailing ---------------------------------
@@ -271,6 +286,66 @@ def test_trailing_stop_fixo_continua_ativo():
     trade = run(candles, make_signals(candles.index, long_at=(2,)), **TRAIL).trades.iloc[0]
     assert trade["reason"] == "stop"
     np.testing.assert_allclose(trade["exit_price"], 49_850.0 - SLIP)
+
+
+# ----------------------------- saída por sinal -----------------------------
+
+
+def test_saida_por_sinal_na_abertura_seguinte():
+    candles = make_candles(
+        [
+            FLAT,
+            FLAT,
+            (50_000, 50_050, 49_950, 50_000),  # t2: sinal de entrada
+            (50_000, 50_100, 49_950, 50_050),  # t3: entrada fill 50000.2
+            (50_050, 50_100, 49_950, 50_000),  # t4: sinal de SAÍDA no close
+            (50_080, 50_120, 50_000, 50_100),  # t5: sai a mercado na abertura
+        ]
+    )
+    sig = make_signals(candles.index, long_at=(2,))
+    sig["long_exit"] = [False, False, False, False, True, False]
+    res = run(candles, sig)
+    trade = res.trades.iloc[0]
+    assert trade["reason"] == "signal"
+    np.testing.assert_allclose(trade["exit_price"], 50_080.0 - SLIP)  # mercado: com slippage
+    fees = FEE * QTY0 * (trade["entry_price"] + trade["exit_price"])
+    np.testing.assert_allclose(trade["pnl"], QTY0 * (trade["exit_price"] - 50_000.2) - fees)
+
+
+def test_flip_saida_e_entrada_oposta_na_mesma_abertura():
+    candles = make_candles(
+        [
+            FLAT,
+            FLAT,
+            (50_000, 50_050, 49_950, 50_000),  # t2: entra long
+            (50_000, 50_100, 49_950, 50_050),  # t3: fill long
+            (50_050, 50_100, 49_950, 50_000),  # t4: exit long + sinal short
+            (50_000, 50_050, 49_900, 49_950),  # t5: flip na abertura
+            FLAT,
+        ]
+    )
+    sig = make_signals(candles.index, long_at=(2,), short_at=(4,))
+    sig["long_exit"] = [False] * 4 + [True, False, False]
+    res = run(candles, sig)
+    assert res.n_trades == 2
+    t1, t2 = res.trades.iloc[0], res.trades.iloc[1]
+    assert t1["reason"] == "signal" and t1["side"] == "long"
+    assert t2["side"] == "short"
+    assert t1["exit_time"] == t2["entry_time"]  # mesma abertura
+    np.testing.assert_allclose(t1["exit_price"], 50_000.0 - SLIP)
+    np.testing.assert_allclose(t2["entry_price"], 50_000.0 - SLIP)
+
+
+def test_sharpe_anualizacao_por_timeframe():
+    """bars_per_year inferido do índice: diário -> 365, 1h -> 8760."""
+    candles_d = make_candles([FLAT] * 30)
+    candles_d.index = pd.date_range("2024-01-01", periods=30, freq="D", tz="UTC")
+    res_d = run(candles_d, make_signals(candles_d.index, long_at=(2,)))
+    assert res_d.bars_per_year == pytest.approx(365.0)
+
+    candles_h = make_candles([FLAT] * 30)
+    res_h = run(candles_h, make_signals(candles_h.index, long_at=(2,)))
+    assert res_h.bars_per_year == pytest.approx(8760.0)
 
 
 # --------------------------- posição e compounding -------------------------

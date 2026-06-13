@@ -2,6 +2,6 @@
 pairs:
   - BTCUSDT
   - ETHUSDT
-interval: "60"        # 1h, na notação da API V5
+intervals: ["5", "15", "60"]   # notação da API V5 (5m, 15m, 1h)
 start: "2020-01-01"   # UTC — início do histórico
 data_dir: data

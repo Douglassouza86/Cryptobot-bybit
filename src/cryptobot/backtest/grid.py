@@ -21,6 +21,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import yaml
+from pydantic import BaseModel, ValidationError
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -28,18 +29,19 @@ import matplotlib.pyplot as plt  # noqa: E402
 from cryptobot.backtest.engine import run_backtest  # noqa: E402
 from cryptobot.config import BacktestConfig  # noqa: E402
 from cryptobot.strategy import (  # noqa: E402
-    EmaRsiV2Params,
     ema_rsi_signals,
     pivot_breakout_signals,
 )
 from cryptobot.strategy.base import DEFAULT_PARAMS_PATH  # noqa: E402
 
-# parâmetros que alteram o SINAL (o restante só altera a execução no motor)
+# parâmetros que alteram o SINAL (o restante só altera a execução no motor);
+# união de todas as famílias de estratégia — campos ausentes viram None
 SIGNAL_FIELDS = (
     "ema_fast", "ema_slow", "rsi_len", "rsi_long_lvl", "rsi_short_lvl",
     "use_daily", "use_weekly", "htf_ema_len", "htf_lag",
     "use_vol_filter", "vol_ma_len", "vol_mult", "atr_len", "use_shorts",
     "piv_len", "trend_filter",
+    "entry_len", "daily_filter",  # N1 Donchian
 )
 
 _AXIS_MAPPERS = {
@@ -73,22 +75,35 @@ def load_grids(path: Path = DEFAULT_PARAMS_PATH) -> dict[str, GridSpec]:
     }
 
 
-def params_from_axes(spec: GridSpec, base: EmaRsiV2Params, axis_values: dict) -> EmaRsiV2Params:
-    """Aplica overrides da hipótese + valores dos eixos (com mapeamento) à base."""
+def params_from_axes(spec: GridSpec, base: BaseModel, axis_values: dict) -> BaseModel:
+    """Aplica overrides da hipótese + valores dos eixos (com mapeamento) à base.
+
+    Reconstrói via model_validate para REVALIDAR (model_copy não dispara os
+    validadores), permitindo que expand descarte combinações inválidas.
+    """
     updates = dict(spec.overrides)
     for eixo, valor in axis_values.items():
         mapper = _AXIS_MAPPERS.get(eixo)
         updates.update(mapper(valor) if mapper else {eixo: valor})
-    return base.model_copy(update=updates)
+    return type(base).model_validate({**base.model_dump(), **updates})
 
 
-def expand(spec: GridSpec, base: EmaRsiV2Params) -> list[tuple[dict, EmaRsiV2Params]]:
-    """Produto cartesiano do grid -> [(valores_dos_eixos, params_completos)]."""
+def expand(spec: GridSpec, base: BaseModel) -> list[tuple[dict, BaseModel]]:
+    """Produto cartesiano do grid -> [(valores_dos_eixos, params_completos)].
+
+    Combinações que violam os validadores da família (ex.: exit_len >=
+    entry_len na Donchian) são silenciosamente descartadas.
+    """
     eixos = list(spec.grid)
-    return [
-        (axis_values := dict(zip(eixos, valores)), params_from_axes(spec, base, axis_values))
-        for valores in itertools.product(*(spec.grid[eixo] for eixo in eixos))
-    ]
+    combos: list[tuple[dict, BaseModel]] = []
+    for valores in itertools.product(*(spec.grid[eixo] for eixo in eixos)):
+        axis_values = dict(zip(eixos, valores))
+        try:
+            params = params_from_axes(spec, base, axis_values)
+        except (ValueError, ValidationError):
+            continue
+        combos.append((axis_values, params))
+    return combos
 
 
 def neighborhood_score(
@@ -119,27 +134,36 @@ def neighborhood_score(
 
 
 def signal_function(hypothesis: str):
+    """Resolve a função de sinal do ciclo v2 pelo nome da hipótese (legado).
+
+    Famílias do ciclo v3 passam `signal_fn` explicitamente para run_grid.
+    """
     return pivot_breakout_signals if hypothesis == "h3_pivot_breakout" else ema_rsi_signals
 
 
 def run_grid(
     candles: pd.DataFrame,
     spec: GridSpec,
-    base: EmaRsiV2Params,
+    base: BaseModel,
     config: BacktestConfig,
     symbol: str,
     funding: pd.Series | None = None,
+    signal_fn=None,
 ) -> pd.DataFrame:
     """Roda todas as combinações e devolve eixos + métricas por linha.
+
+    `signal_fn` None usa o mapeamento legado do ciclo v2 (signal_function);
+    famílias v3 passam a função explicitamente.
 
     IMPORTANTE: chame com candles JÁ recortados no IS (walkforward.split) —
     o grid jamais deve enxergar o OOS.
     """
-    signal_fn = signal_function(spec.name)
+    if signal_fn is None:
+        signal_fn = signal_function(spec.name)
     cache: dict[tuple, pd.DataFrame] = {}
     linhas = []
     for axis_values, params in expand(spec, base):
-        chave = tuple(getattr(params, campo) for campo in SIGNAL_FIELDS)
+        chave = tuple(getattr(params, campo, None) for campo in SIGNAL_FIELDS)
         if chave not in cache:
             cache[chave] = signal_fn(candles, params)
         res = run_backtest(candles, cache[chave], params, config, symbol, funding=funding)

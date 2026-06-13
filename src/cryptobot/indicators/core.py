@@ -98,3 +98,74 @@ def pivot_high(high: pd.Series, left: int, right: int) -> pd.Series:
 def pivot_low(low: pd.Series, left: int, right: int) -> pd.Series:
     """Pine ta.pivotlow: espelho de pivot_high para mínimas."""
     return _pivot(low, left, right, is_high=False)
+
+
+def donchian_high(high: pd.Series, length: int) -> pd.Series:
+    """Pine ta.highest: máxima dos últimos `length` candles (inclui o atual).
+
+    Para rompimento sem look-ahead, o sinal deve usar .shift(1).
+    """
+    return high.rolling(length, min_periods=length).max()
+
+
+def donchian_low(low: pd.Series, length: int) -> pd.Series:
+    """Pine ta.lowest: mínima dos últimos `length` candles (inclui o atual)."""
+    return low.rolling(length, min_periods=length).min()
+
+
+def macd(
+    close: pd.Series, fast: int = 12, slow: int = 26, signal_len: int = 9
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Pine ta.macd: (linha, sinal, histograma) com EMAs padrão."""
+    line = ema(close, fast) - ema(close, slow)
+    signal = ema(line, signal_len)
+    return line, signal, line - signal
+
+
+def supertrend(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    atr_len: int = 10,
+    mult: float = 3.0,
+) -> tuple[pd.Series, pd.Series]:
+    """Pine ta.supertrend: (linha, tendência) com bandas em hl2 ± mult*ATR.
+
+    tendência = +1 (preço acima da linha, alta) / -1 (baixa); NaN no warm-up
+    do ATR. Bandas com ratchet: em alta a banda inferior só sobe; o flip
+    ocorre quando o close cruza a linha vigente.
+    """
+    hl2 = (high + low) / 2.0
+    atr_series = atr(high, low, close, atr_len)
+    upper_base = (hl2 + mult * atr_series).to_numpy()
+    lower_base = (hl2 - mult * atr_series).to_numpy()
+    closes = close.to_numpy(dtype=np.float64)
+
+    n = len(closes)
+    line = np.full(n, np.nan)
+    trend = np.full(n, np.nan)
+    valid = ~np.isnan(upper_base)
+    if not valid.any():
+        return pd.Series(line, index=close.index), pd.Series(trend, index=close.index)
+
+    start = int(np.argmax(valid))
+    upper, lower = upper_base[start], lower_base[start]
+    direction = 1 if closes[start] > upper_base[start] else -1
+    line[start], trend[start] = (lower, 1) if direction == 1 else (upper, -1)
+
+    for t in range(start + 1, n):
+        # ratchet das bandas (Pine): só apertam na direção da tendência,
+        # e destravam quando o close da barra anterior já as violou
+        if lower_base[t] > lower or closes[t - 1] < lower:
+            lower = lower_base[t]
+        if upper_base[t] < upper or closes[t - 1] > upper:
+            upper = upper_base[t]
+
+        if direction == 1 and closes[t] < lower:
+            direction = -1
+        elif direction == -1 and closes[t] > upper:
+            direction = 1
+
+        line[t], trend[t] = (lower, 1.0) if direction == 1 else (upper, -1.0)
+
+    return pd.Series(line, index=close.index), pd.Series(trend, index=close.index)

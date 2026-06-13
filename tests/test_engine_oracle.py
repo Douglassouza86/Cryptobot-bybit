@@ -35,6 +35,9 @@ def simulate_oracle(candles, signals, params, config, symbol, funding=None):
     c = candles["close"].to_numpy()
     long_sig = signals["long_entry"].to_numpy()
     short_sig = signals["short_entry"].to_numpy()
+    n = len(c)
+    long_x = signals["long_exit"].to_numpy() if "long_exit" in signals else np.zeros(n, bool)
+    short_x = signals["short_exit"].to_numpy() if "short_exit" in signals else np.zeros(n, bool)
     atr = signals["atr"].to_numpy()
     fr = rates.to_numpy()
 
@@ -75,7 +78,16 @@ def simulate_oracle(candles, signals, params, config, symbol, funding=None):
             cash -= pay
             pos["funding"] += pay
 
-        # 2) entrada pendente do sinal de t-1
+        # 2) saída por sinal de t-1: a mercado na abertura de t
+        if pos is not None and t > 0:
+            sai = (pos["side"] == "long" and long_x[t - 1]) or (
+                pos["side"] == "short" and short_x[t - 1]
+            )
+            if sai:
+                preco = o[t] - slip if pos["side"] == "long" else o[t] + slip
+                close_position(t, preco, "signal")
+
+        # 3) entrada pendente do sinal de t-1 (flip suportado)
         if pos is None and t > 0 and cash > 0 and (long_sig[t - 1] or short_sig[t - 1]):
             dist = params.stop_mult * atr[t - 1]
             if dist > 0:
@@ -107,7 +119,7 @@ def simulate_oracle(candles, signals, params, config, symbol, funding=None):
                     "funding": 0.0,
                 }
 
-        # 3) saídas — pior caso: stop fixo primeiro
+        # 4) saídas intrabar — pior caso: stop fixo primeiro
         if pos is not None and pos["side"] == "long":
             if lo[t] <= pos["stop"]:
                 close_position(t, min(o[t], pos["stop"]) - slip, "stop")
@@ -119,7 +131,7 @@ def simulate_oracle(candles, signals, params, config, symbol, funding=None):
                     pos["trail"] = max(pos["trail"], h[t] - pos["off"])
                 if pos is not None and pos["trail"] is not None and lo[t] <= pos["trail"]:
                     close_position(t, min(o[t], pos["trail"]) - slip, "trail")
-            elif h[t] >= pos["tp"]:
+            elif params.tp_mult > 0 and h[t] >= pos["tp"]:
                 close_position(t, max(o[t], pos["tp"]), "tp")
         elif pos is not None:
             if h[t] >= pos["stop"]:
@@ -132,7 +144,7 @@ def simulate_oracle(candles, signals, params, config, symbol, funding=None):
                     pos["trail"] = min(pos["trail"], lo[t] + pos["off"])
                 if pos is not None and pos["trail"] is not None and h[t] >= pos["trail"]:
                     close_position(t, max(o[t], pos["trail"]) + slip, "trail")
-            elif lo[t] <= pos["tp"]:
+            elif params.tp_mult > 0 and lo[t] <= pos["tp"]:
                 close_position(t, min(o[t], pos["tp"]), "tp")
 
         # 4) equity a mercado no close
@@ -216,6 +228,17 @@ def test_motor_igual_oraculo_alvo_fixo(candles, funding_sintetico):
 def test_motor_igual_oraculo_trailing(candles, funding_sintetico):
     params = EmaRsiV2Params(**PARAMS_CURTOS, use_trailing=True)
     signals = ema_rsi_signals(candles, params)
+    _comparar(candles, signals, params, funding_sintetico)
+
+
+def test_motor_igual_oraculo_saidas_por_sinal(candles, funding_sintetico):
+    """Fuzz: sinais de saída aleatórios (densos) + entradas reais — o motor
+    e o oráculo precisam concordar trade a trade, incluindo flips."""
+    params = EmaRsiV2Params(**PARAMS_CURTOS)
+    signals = ema_rsi_signals(candles, params).copy()
+    rng = np.random.default_rng(77)
+    signals["long_exit"] = rng.random(len(signals)) < 0.05
+    signals["short_exit"] = rng.random(len(signals)) < 0.05
     _comparar(candles, signals, params, funding_sintetico)
 
 

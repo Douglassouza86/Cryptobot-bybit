@@ -10,12 +10,17 @@ from pydantic import BaseModel, field_validator, model_validator
 
 
 class DataConfig(BaseModel):
-    """config/data.yaml — pares, timeframe e janela do histórico."""
+    """config/data.yaml — pares, timeframes e janela do histórico."""
 
     pairs: list[str]
-    interval: str = "60"
+    intervals: list[str] = ["60"]  # notação da API V5: "5", "15", "60"...
     start: datetime
     data_dir: Path = Path("data")
+
+    @property
+    def interval(self) -> str:
+        """Timeframe principal (1h) — compatibilidade com a Fase 0/1."""
+        return "60"
 
     @field_validator("start", mode="after")
     @classmethod

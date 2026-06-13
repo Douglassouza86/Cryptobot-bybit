@@ -31,7 +31,7 @@ from cryptobot.backtest.funding import funding_on_grid
 from cryptobot.config import BacktestConfig
 from cryptobot.strategy.base import EmaRsiV2Params
 
-REASON_LABELS = {0: "stop", 1: "tp", 2: "trail", 3: "end_of_data"}
+REASON_LABELS = {0: "stop", 1: "tp", 2: "trail", 3: "end_of_data", 4: "signal"}
 
 
 def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmente ramificado
@@ -41,6 +41,8 @@ def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmen
     close: np.ndarray,
     long_entry: np.ndarray,
     short_entry: np.ndarray,
+    long_exit: np.ndarray,
+    short_exit: np.ndarray,
     atr_arr: np.ndarray,
     funding_rate: np.ndarray,
     init_cash: float,
@@ -91,7 +93,30 @@ def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmen
             cash -= pay
             funding_acc += pay
 
-        # 2) entrada pendente do sinal de t-1 (execução na abertura de t)
+        # 2) saída por SINAL de t-1: a mercado na abertura de t (antes de
+        #    qualquer checagem intrabar — já estamos fora quando a barra anda)
+        if d != 0 and t > 0:
+            saida_sinal = (d == 1 and long_exit[t - 1]) or (d == -1 and short_exit[t - 1])
+            if saida_sinal:
+                exit_price = o - d * slip
+                fee = fee_rate * qty * exit_price
+                cash += d * qty * (exit_price - entry_price) - fee
+                fees_acc += fee
+                tr_entry_idx[k] = entry_idx
+                tr_exit_idx[k] = t
+                tr_side[k] = d
+                tr_qty[k] = qty
+                tr_entry_price[k] = entry_price
+                tr_exit_price[k] = exit_price
+                tr_fees[k] = fees_acc
+                tr_funding[k] = funding_acc
+                tr_reason[k] = 4
+                k += 1
+                d = 0
+                qty = 0.0
+
+        # 3) entrada pendente do sinal de t-1 (execução na abertura de t;
+        #    flip suportado: saída por sinal + entrada oposta na mesma abertura)
         if d == 0 and t > 0 and cash > 0.0:
             want_long = long_entry[t - 1]
             want_short = short_entry[t - 1]
@@ -114,7 +139,7 @@ def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmen
                     funding_acc = 0.0
                     entry_idx = t
 
-        # 3) saídas (inclusive na barra da entrada)
+        # 4) saídas intrabar (inclusive na barra da entrada)
         if d != 0:
             adverse = low[t] if d == 1 else high[t]
             favorable = high[t] if d == 1 else low[t]
@@ -140,7 +165,8 @@ def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmen
                     exit_price = base - d * slip
                     reason = 2
             else:
-                if (favorable - tp_price) * d >= 0.0:
+                # tp_mult <= 0 desliga o alvo fixo (saída fica por stop/sinal)
+                if tp_mult > 0.0 and (favorable - tp_price) * d >= 0.0:
                     base = o if (o - tp_price) * d > 0.0 else tp_price  # limit: melhor preço
                     exit_price = base
                     reason = 1
@@ -162,13 +188,13 @@ def _simulate_py(  # noqa: PLR0912, PLR0915 - laço de simulação é naturalmen
                 d = 0
                 qty = 0.0
 
-        # 4) equity a mercado no fechamento
+        # 5) equity a mercado no fechamento
         if d != 0:
             equity[t] = cash + d * qty * (close[t] - entry_price)
         else:
             equity[t] = cash
 
-    # 5) posição aberta no fim dos dados: fecha a mercado no último close
+    # 6) posição aberta no fim dos dados: fecha a mercado no último close
     if d != 0:
         exit_price = close[n - 1] - d * slip
         fee = fee_rate * qty * exit_price
@@ -210,6 +236,7 @@ class BacktestResult:
     equity: pd.Series
     trades: pd.DataFrame
     initial_capital: float
+    bars_per_year: float = 8760.0  # 1h por padrão; run_backtest infere do índice
 
     @property
     def n_trades(self) -> int:
@@ -242,12 +269,12 @@ class BacktestResult:
 
     @property
     def sharpe(self) -> float:
-        """Sharpe anualizado dos retornos horários do equity (rf = 0)."""
+        """Sharpe anualizado dos retornos por barra do equity (rf = 0)."""
         returns = self.equity.pct_change().dropna()
         std = returns.std(ddof=1)
         if not len(returns) or std == 0.0 or np.isnan(std):
             return float("nan")
-        return float(returns.mean() / std * np.sqrt(365 * 24))
+        return float(returns.mean() / std * np.sqrt(self.bars_per_year))
 
     @property
     def total_fees(self) -> float:
@@ -289,6 +316,11 @@ def run_backtest(
     else:
         funding_rate = np.zeros(len(candles), dtype=np.float64)
 
+    def _bool_col(name: str) -> np.ndarray:
+        if name in signals.columns:
+            return signals[name].to_numpy(dtype=np.bool_)
+        return np.zeros(len(signals), dtype=np.bool_)
+
     out = _simulate(
         candles["open"].to_numpy(dtype=np.float64),
         candles["high"].to_numpy(dtype=np.float64),
@@ -296,6 +328,8 @@ def run_backtest(
         candles["close"].to_numpy(dtype=np.float64),
         signals["long_entry"].to_numpy(dtype=np.bool_),
         signals["short_entry"].to_numpy(dtype=np.bool_),
+        _bool_col("long_exit"),
+        _bool_col("short_exit"),
         signals["atr"].to_numpy(dtype=np.float64),
         funding_rate,
         config.initial_capital,
@@ -326,4 +360,10 @@ def run_backtest(
         }
     )
     equity = pd.Series(equity_arr, index=candles.index, name="equity")
-    return BacktestResult(equity=equity, trades=trades, initial_capital=config.initial_capital)
+    passo = candles.index.to_series().diff().median()
+    return BacktestResult(
+        equity=equity,
+        trades=trades,
+        initial_capital=config.initial_capital,
+        bars_per_year=float(pd.Timedelta(days=365) / passo),
+    )
